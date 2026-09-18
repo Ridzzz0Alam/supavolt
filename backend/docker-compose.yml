@@ -57,7 +57,9 @@ services:
       - tests_bin:/src/src/Supavolt.Tests/bin
       - nuget:/root/.nuget/packages
       - dpkeys:/root/.aspnet/DataProtection-Keys
-      - ${APPDATA:-~/.microsoft}/Microsoft/UserSecrets/supavolt-api:/root/.microsoft/usersecrets/supavolt-api:ro
+      # Windows finds the store under %APPDATA%. On macOS/Linux set, in backend/.env:
+      #   SUPAVOLT_SECRETS_DIR=${HOME}/.microsoft/usersecrets/supavolt-api
+      - ${SUPAVOLT_SECRETS_DIR:-${APPDATA}/Microsoft/UserSecrets/supavolt-api}:/root/.microsoft/usersecrets/supavolt-api:ro
       - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
