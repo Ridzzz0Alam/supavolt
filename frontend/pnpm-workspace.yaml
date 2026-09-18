@@ -1,0 +1,5 @@
+# Install scripts pnpm may run. Both are off: the dashboard was built and tested without them.
+# Set sharp to true if you need next/image optimisation in production builds.
+allowBuilds:
+  sharp: false
+  unrs-resolver: false
