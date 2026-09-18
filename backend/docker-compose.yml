@@ -1,0 +1,73 @@
+# Local dependencies. Run Postgres yourself rather than against a serverless provider:
+# LISTEN/NOTIFY needs a long-lived session, and you want CREATE SCHEMA to be instant.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: supavolt_admin
+      POSTGRES_PASSWORD: supavolt
+      POSTGRES_DB: supavolt
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+
+  # S3-compatible storage for local development. In production use S3 or Cloudflare R2.
+  minio:
+    image: quay.io/minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: supavolt
+      MINIO_ROOT_PASSWORD: supavolt123
+    ports: ["9000:9000", "9001:9001"]
+    volumes:
+      - miniodata:/data
+
+  # The API in a Linux SDK container. Use it where the host cannot load freshly built assemblies
+  # (Windows Smart App Control blocks unsigned DLLs), or just to avoid installing the SDK:
+  #   docker compose --profile api up -d
+  # Secrets come from your normal `dotnet user-secrets` store, mounted read-only.
+  api:
+    profiles: ["api"]
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    working_dir: /src/src/Supavolt.Api
+    command: sh -c "dotnet run --no-launch-profile"
+    depends_on: [postgres, minio]
+    ports: ["5000:5000"]
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:5000
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      PATH: /usr/share/dotnet:/root/.dotnet/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      Database__ConnectionString: Host=postgres;Port=5432;Database=supavolt;Username=supavolt_admin;Password=supavolt
+      Database__DirectConnectionString: Host=postgres;Port=5432;Database=supavolt;Username=supavolt_admin;Password=supavolt;Pooling=false
+      Database__TenantConnectionString: Host=postgres;Port=5432;Database=supavolt;Username=supavolt_tenant;Password=supavolt_tenant
+      # Presigned URLs embed this host, so it must resolve from both the container and your browser.
+      Storage__ServiceUrl: http://host.docker.internal:9000
+      # Integration tests start their own Postgres through the host's Docker daemon.
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - .:/src
+      - api_obj:/src/src/Supavolt.Api/obj
+      - api_bin:/src/src/Supavolt.Api/bin
+      - contracts_obj:/src/src/Supavolt.Contracts/obj
+      - contracts_bin:/src/src/Supavolt.Contracts/bin
+      - tests_obj:/src/src/Supavolt.Tests/obj
+      - tests_bin:/src/src/Supavolt.Tests/bin
+      - nuget:/root/.nuget/packages
+      - dpkeys:/root/.aspnet/DataProtection-Keys
+      - ${APPDATA:-~/.microsoft}/Microsoft/UserSecrets/supavolt-api:/root/.microsoft/usersecrets/supavolt-api:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  pgdata:
+  miniodata:
+  api_obj:
+  api_bin:
+  contracts_obj:
+  contracts_bin:
+  tests_obj:
+  tests_bin:
+  nuget:
+  dpkeys:
