@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Supavolt.Contracts</RootNamespace>
+  </PropertyGroup>
+</Project>
