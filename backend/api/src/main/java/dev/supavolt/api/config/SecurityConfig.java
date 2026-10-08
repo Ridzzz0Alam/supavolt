@@ -79,7 +79,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST,
                                 "/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/logout").permitAll()
                         .requestMatchers(HttpMethod.GET,
-                                "/api/auth/google", "/api/auth/github", "/api/auth/invite/accept",
+                                "/api/auth/providers", "/api/auth/google", "/api/auth/github", "/api/auth/invite/accept",
                                 OAUTH_AUTHORIZATION_BASE + "/*", OAUTH_CALLBACK).permitAll()
                         // Only served when springdoc is enabled (the dev profile).
                         .requestMatchers("/api/openapi/**", "/api/docs", "/api/swagger-ui/**").permitAll()

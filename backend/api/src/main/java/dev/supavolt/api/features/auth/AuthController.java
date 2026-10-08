@@ -3,6 +3,7 @@ package dev.supavolt.api.features.auth;
 import dev.supavolt.api.config.SupavoltProperties;
 import dev.supavolt.api.features.members.InviteService;
 import dev.supavolt.api.infrastructure.persistence.UserRepository;
+import dev.supavolt.contracts.Contracts.AuthProvidersResponse;
 import dev.supavolt.contracts.Contracts.CurrentUserResponse;
 import dev.supavolt.contracts.Contracts.LoginRequest;
 import dev.supavolt.contracts.Contracts.MessageResponse;
@@ -88,6 +89,13 @@ public class AuthController {
     // ── OAuth ────────────────────────────────────────────────────────────────
     // Spring Security's oauth2Login owns state and PKCE; these only start the flow. The callback
     // is /api/auth/{provider}/callback, handled by OAuthLoginHandlers.
+
+    /** Lets the login page offer only the providers that would actually work. */
+    @GetMapping("/providers")
+    public AuthProvidersResponse providers() {
+        var oauth = properties.oauth();
+        return new AuthProvidersResponse(oauth.google().configured(), oauth.github().configured());
+    }
 
     @GetMapping("/google")
     public ResponseEntity<Void> google() {
