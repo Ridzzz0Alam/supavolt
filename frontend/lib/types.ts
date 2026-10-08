@@ -1,5 +1,5 @@
 /**
- * Hand-mirrored from backend/src/Supavolt.Contracts/Contracts.cs.
+ * Hand-mirrored from backend/contracts/src/main/java/dev/supavolt/contracts/Contracts.java.
  *
  * The API serialises camelCase with string enums, so these line up field for field. If you would
  * rather generate this, the API exposes an OpenAPI document at /api/openapi/v1.json in

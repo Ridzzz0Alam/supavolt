@@ -4,8 +4,9 @@
 API over its tables, file storage, realtime change events and end-user authentication, all
 managed from a web dashboard.
 
-It is built with **.NET 10 / ASP.NET Core** (EF Core, Dapper, SignalR) and a **Next.js 16 +
-TypeScript** dashboard, on **PostgreSQL 17** and **S3-compatible storage** (MinIO locally).
+It is built with **Java 17 / Spring Boot 4** (Spring MVC, Spring Security, JPA + JdbcClient,
+Flyway, WebSockets) and a **Next.js 16 + TypeScript** dashboard, on **PostgreSQL 17** and
+**S3-compatible storage** (RustFS locally).
 
 - [What you get](#what-you-get)
 - [How it fits together](#how-it-fits-together)
@@ -49,16 +50,16 @@ flowchart LR
         pages["Server components<br/>and server actions"]
     end
 
-    subgraph API["ASP.NET Core API :5000"]
+    subgraph API["Spring Boot API :5000"]
         auth["Two auth schemes<br/>Dashboard cookie / ProjectKey header"]
         features["Features<br/>Auth · Orgs · Members · Projects<br/>TableEditor · SqlEditor · DataApi<br/>Storage · Realtime · ProjectAuth"]
-        hub["SignalR hub<br/>/realtime"]
+        hub["Realtime WebSocket<br/>/realtime (SignalR protocol)"]
         listener["Notification listener<br/>(one LISTEN connection)"]
     end
 
     subgraph Data
         pg[("PostgreSQL 17<br/>control plane + one schema per project")]
-        s3[("MinIO / S3<br/>file bytes")]
+        s3[("S3 / R2 / RustFS<br/>file bytes")]
     end
 
     dev --> mw --> pages -->|"HTTP + cookie"| auth
@@ -72,7 +73,7 @@ flowchart LR
 ```
 
 The two halves share no code at build time. The contract between them is HTTP plus
-`frontend/lib/types.ts`, which mirrors `backend/src/Supavolt.Contracts/Contracts.cs` by hand.
+`frontend/lib/types.ts`, which mirrors `backend/contracts/.../Contracts.java` by hand.
 
 ### What lives where in Postgres
 
@@ -175,21 +176,20 @@ erDiagram
 
 ## Run it locally
 
-You need three things running: **Postgres + MinIO** (in Docker), the **API**, and the
+You need three things running: **Postgres + S3 storage** (in Docker), the **API**, and the
 **dashboard**. There are two ways to run the API. Pick one:
 
 ```mermaid
 flowchart TD
-    start([Start]) --> prereq["Install prerequisites<br/>Docker, .NET 10 SDK, Node 20+"]
+    start([Start]) --> prereq["Install prerequisites<br/>Docker, Java 17, Node 20+"]
     prereq --> clone["Clone the repo"]
-    clone --> infra["Step 1: start Postgres + MinIO<br/>docker compose up -d"]
-    infra --> secrets["Step 2: set API secrets<br/>dotnet user-secrets"]
-    secrets --> choice{"Can your machine run<br/>locally built .NET DLLs?"}
-    choice -->|"Yes: macOS, Linux,<br/>most Windows"| native["Option A: run natively<br/>dotnet ef database update<br/>dotnet run"]
-    choice -->|"No: Windows with<br/>Smart App Control on"| docker["Option B: run the API in Docker<br/>docker compose --profile api up -d"]
-    native --> bucket["Step 4: create the storage bucket"]
-    docker --> bucket
-    bucket --> web["Step 5: start the dashboard<br/>pnpm install && pnpm dev"]
+    clone --> infra["Step 1: start Postgres + storage<br/>docker compose up -d"]
+    infra --> secrets["Step 2: generate API secrets<br/>scripts/new-secrets.sh"]
+    secrets --> choice{"Java 17 installed?"}
+    choice -->|"Yes"| native["Option A: run natively<br/>./mvnw -pl api -am spring-boot:run"]
+    choice -->|"No"| docker["Option B: run the API in Docker<br/>docker compose --profile api up -d"]
+    native --> web["Step 4: start the dashboard<br/>pnpm install && pnpm dev"]
+    docker --> web
     web --> done(["Open http://localhost:3001"])
 ```
 
@@ -198,15 +198,19 @@ flowchart TD
 | Tool | Version | Check |
 | --- | --- | --- |
 | [Docker Desktop](https://www.docker.com/products/docker-desktop/) | any recent | `docker --version` |
-| [.NET SDK](https://dotnet.microsoft.com/download/dotnet/10.0) | 10.0.x | `dotnet --version` |
+| Java (e.g. [Eclipse Temurin](https://adoptium.net/)) | 17 or newer (not needed for Option B) | `java -version` |
 | [Node.js](https://nodejs.org/) | 20 or newer | `node -v` |
 | pnpm (optional, `npx pnpm` works too) | any | `pnpm -v` |
 | Git | any | `git --version` |
 
-The commands below are for a **bash-style shell**: macOS/Linux Terminal, or **Git Bash** on
-Windows. Git Bash includes `openssl`, which is used to generate secrets.
+Maven is not needed: the repo ships the Maven wrapper (`backend/mvnw`), which downloads the
+pinned version on first use.
 
-### Step 1: Clone and start Postgres + MinIO
+The commands below are for a **bash-style shell**: macOS/Linux Terminal, or **Git Bash** on
+Windows (use `mvnw.cmd` from `cmd`/PowerShell). Git Bash includes `openssl`, which is used to
+generate secrets.
+
+### Step 1: Clone and start Postgres + storage
 
 ```bash
 git clone https://github.com/Ridzzz0Alam/supavolt.git
@@ -219,7 +223,7 @@ This starts:
 | Container | Port | Login |
 | --- | --- | --- |
 | `postgres` | 5432 | `supavolt_admin` / `supavolt`, database `supavolt` |
-| `minio` | 9000 (S3), 9001 (web console) | `supavolt` / `supavolt123` |
+| `storage` ([RustFS](https://rustfs.com), S3-compatible) | 9000 (S3), 9001 (web console) | `supavolt` / `supavolt123` |
 
 On first start, Postgres runs `db/init/01-roles.sql`, which creates the least-privilege
 `supavolt_tenant` role. Check that it exists:
@@ -228,69 +232,57 @@ On first start, Postgres runs `db/init/01-roles.sql`, which creates the least-pr
 docker compose exec postgres psql -U supavolt_admin -d supavolt -c "\du"
 ```
 
-### Step 2: Set the API secrets
+> Something else already on port 5432? Change the left-hand port in `docker-compose.yml` and
+> point the API at it: `export SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:<port>/supavolt`.
 
-Secrets never go in `appsettings.json`. They live in .NET's per-user secret store, outside the
-repo:
+### Step 2: Generate the API secrets
 
-```bash
-cd src/Supavolt.Api
-dotnet user-secrets set "Jwt:AccessSecret"        "$(openssl rand -hex 32)"
-dotnet user-secrets set "Jwt:RefreshSecret"       "$(openssl rand -hex 32)"
-dotnet user-secrets set "ProjectKeys:Secret"      "$(openssl rand -hex 32)"
-dotnet user-secrets set "Invites:Secret"          "$(openssl rand -hex 32)"
-dotnet user-secrets set "Storage:AccessKeyId"     "supavolt"
-dotnet user-secrets set "Storage:SecretAccessKey" "supavolt123"
-```
-
-<details>
-<summary>Using PowerShell 7 instead of bash?</summary>
-
-```powershell
-function New-Secret { [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLower() }
-cd src/Supavolt.Api
-dotnet user-secrets set "Jwt:AccessSecret"   (New-Secret)
-dotnet user-secrets set "Jwt:RefreshSecret"  (New-Secret)
-dotnet user-secrets set "ProjectKeys:Secret" (New-Secret)
-dotnet user-secrets set "Invites:Secret"     (New-Secret)
-dotnet user-secrets set "Storage:AccessKeyId"     "supavolt"
-dotnet user-secrets set "Storage:SecretAccessKey" "supavolt123"
-```
-
-</details>
-
-Optional: to enable "Continue with Google / GitHub" on the dashboard login page, also set
-`Google:ClientId`, `Google:ClientSecret`, `GitHub:ClientId` and `GitHub:ClientSecret`. If they
-are not set, those buttons do nothing and everything else works.
-
-### Step 3: Create the database tables and run the API
-
-#### Option A: run natively (macOS, Linux, most Windows machines)
+Secrets never go in `application.yml`. They live in a file outside the repo, which the API reads
+on start (`SUPAVOLT_SECRETS_FILE`, default `~/.config/supavolt/secrets.yml`):
 
 ```bash
-# still in backend/src/Supavolt.Api
-dotnet tool restore            # installs dotnet-ef, pinned in backend/dotnet-tools.json
-dotnet ef database update      # creates the control-plane tables
-dotnet run --no-launch-profile --urls http://localhost:5000
+scripts/new-secrets.sh        # still in backend/
 ```
+
+It prints the `JWT_ACCESS_SECRET` line you will need in Step 4. Any setting can also come from an
+environment variable instead: `supavolt.jwt.access-secret` is `SUPAVOLT_JWT_ACCESSSECRET`.
+
+Optional: to enable "Continue with Google / GitHub" on the dashboard login page, add to the same
+file:
+
+```yaml
+supavolt:
+  oauth:
+    google: { client-id: ..., client-secret: ... }
+    github: { client-id: ..., client-secret: ... }
+```
+
+The callback URLs to register with the providers are
+`http://localhost:5000/api/auth/google/callback` and `.../api/auth/github/callback`. If they are
+not set, those buttons send you back to the login page and everything else works.
+
+### Step 3: Run the API
+
+#### Option A: run natively
+
+```bash
+# still in backend/
+./mvnw -pl api -am spring-boot:run
+```
+
+`spring-boot:run` uses the `dev` profile: local database passwords, plain-http cookies, the API
+reference, and it creates the `supavolt-dev` storage bucket if it is missing. Flyway creates the
+control-plane tables on the first start.
 
 #### Option B: run the API in Docker
 
-Use this if `dotnet run` fails with **"An Application Control policy has blocked this file"**.
-Windows Smart App Control blocks DLLs you have just compiled, and turning it off cannot be undone,
-so running the API in a Linux container avoids it. It reads the same user-secrets from Step 2.
+No Java needed: the API builds and runs in a JDK container and reads the same secrets file.
 
 ```bash
 cd backend
-docker compose --profile api up -d                  # builds and starts the API (first run takes a minute)
-docker compose exec api dotnet tool restore
-docker compose exec api dotnet ef database update
-docker compose --profile api restart api            # restart now that the tables exist
+docker compose --profile api up -d        # first start downloads Maven and builds: a minute or two
+docker compose logs -f api                # wait for "Started SupavoltApplication"
 ```
-
-> **macOS / Linux with Option B:** the container looks for secrets under `%APPDATA%`, which only
-> exists on Windows. Create `backend/.env` containing
-> `SUPAVOLT_SECRETS_DIR=${HOME}/.microsoft/usersecrets/supavolt-api` first.
 
 **Either way, check it's up:**
 
@@ -299,19 +291,10 @@ curl http://localhost:5000/api/health
 # {"status":"ok","timestamp":"..."}
 ```
 
-In development there is also an interactive API reference at **http://localhost:5000/scalar/v1**.
+In development there is also an interactive API reference at **http://localhost:5000/api/docs**
+(the OpenAPI document is `/api/openapi/v1.json`).
 
-### Step 4: Create the storage bucket
-
-```bash
-cd backend
-docker compose exec minio sh -c 'mc alias set local http://localhost:9000 supavolt supavolt123 && mc mb -p local/supavolt-dev'
-```
-
-Or open the MinIO console at http://localhost:9001, sign in with `supavolt` / `supavolt123` and
-create a bucket named `supavolt-dev`.
-
-### Step 5: Start the dashboard
+### Step 4: Start the dashboard
 
 ```bash
 cd frontend
@@ -319,19 +302,13 @@ cp .env.example .env.local
 ```
 
 Open `frontend/.env.local` and set `JWT_ACCESS_SECRET` to **the same value** as the API's
-`Jwt:AccessSecret`. The dashboard verifies session tokens itself, so the two must match. To see the
-value:
-
-```bash
-cd backend/src/Supavolt.Api && dotnet user-secrets list
-```
-
-The finished `frontend/.env.local` looks like this:
+`supavolt.jwt.access-secret` (Step 2 printed it). The dashboard verifies session tokens itself, so
+the two must match. The finished `frontend/.env.local` looks like this:
 
 ```ini
 NEXT_PUBLIC_API_URL=http://localhost:5000/api
 API_URL=http://localhost:5000/api
-JWT_ACCESS_SECRET=<same as Jwt:AccessSecret>
+JWT_ACCESS_SECRET=<same as supavolt.jwt.access-secret>
 JWT_ISSUER=supavolt
 JWT_AUDIENCE=supavolt-dashboard
 ```
@@ -363,11 +340,11 @@ Open **http://localhost:3001**, register an account, and create your first proje
 
 ```bash
 # stop (keeps all data)
-cd backend && docker compose --profile api stop       # and Ctrl+C the dashboard / dotnet run
+cd backend && docker compose --profile api stop       # and Ctrl+C the dashboard / spring-boot:run
 
 # start again later
 cd backend && docker compose up -d                    # Option B: docker compose --profile api up -d
-cd backend/src/Supavolt.Api && dotnet run --no-launch-profile --urls http://localhost:5000   # Option A only
+cd backend && ./mvnw -pl api -am spring-boot:run      # Option A only
 cd frontend && pnpm dev
 
 # wipe everything and start fresh (deletes all data)
@@ -379,9 +356,9 @@ cd backend && docker compose --profile api down -v
 | Port | Service |
 | --- | --- |
 | 3001 | Dashboard (Next.js) |
-| 5000 | API: `/api/...`, realtime hub at `/realtime`, API docs at `/scalar/v1` |
+| 5000 | API: `/api/...`, realtime at `/realtime`, API docs at `/api/docs` (dev) |
 | 5432 | PostgreSQL |
-| 9000 / 9001 | MinIO S3 API / MinIO web console |
+| 9000 / 9001 | S3 storage API / storage web console |
 
 ---
 
@@ -468,7 +445,7 @@ sequenceDiagram
     autonumber
     participant B as Browser
     participant A as API
-    participant S as MinIO / S3
+    participant S as S3 storage
 
     B->>A: POST …/buckets/{id}/upload-url {fileName, contentType, size}
     A->>A: build key {projectId}/{bucketId}/{uuid}/{fileName}
@@ -488,7 +465,7 @@ sequenceDiagram
     participant W as Writer (SQL editor / data API)
     participant PG as Postgres
     participant L as NotificationListener (one per API instance)
-    participant H as SignalR hub /realtime
+    participant H as Realtime endpoint /realtime
     participant C as Subscribed client
 
     C->>H: connect with anon key, then Subscribe("todos")
@@ -502,7 +479,9 @@ sequenceDiagram
 ```
 
 One Postgres channel, one trigger function and one listening connection serve every project and
-table. Running several API instances needs a Redis backplane (see [Not built yet](#not-built-yet)).
+table. `/realtime` speaks the SignalR JSON protocol over a plain WebSocket, so the dashboard's
+`@microsoft/signalr` client connects to it as is. Running several API instances needs a shared
+broker (see [Not built yet](#not-built-yet)).
 
 ---
 
@@ -548,7 +527,7 @@ dangerous words, because that is easy to get around.
 
 ```mermaid
 flowchart TB
-    admin["supavolt_admin<br/>EF Core, DDL, migrations"]
+    admin["supavolt_admin<br/>JPA, Flyway, DDL"]
     tenant["supavolt_tenant<br/>data API + table-editor reads<br/>(server-built SQL only)"]
     roleA["proj_1a2b3c4d<br/>SQL editor for project A"]
     roleB["proj_9f8e7d6c<br/>SQL editor for project B"]
@@ -568,19 +547,19 @@ flowchart TB
 
 | Connection | Postgres role | Used by |
 | --- | --- | --- |
-| `Database:ConnectionString` | `supavolt_admin` | EF Core, DDL, introspection |
-| `Database:TenantConnectionString` | `supavolt_tenant` | data API, table-editor reads |
+| `spring.datasource.*` | `supavolt_admin` | JPA, Flyway, DDL, introspection |
+| `supavolt.database.tenant-*` (same URL) | `supavolt_tenant` | data API, table-editor reads |
 | per project (derived) | `proj_xxxxxxxx` | the SQL editor for that project |
-| `Database:DirectConnectionString` | `supavolt_admin`, not pooled | the single realtime LISTEN connection |
+| `supavolt.database.direct-url` (default: admin URL) | `supavolt_admin`, not pooled | the single realtime LISTEN connection |
 
 Every SQL editor run is also wrapped in `SET LOCAL statement_timeout = '15s'`.
 
 ### Other rules the code follows
 
-- **Values are always Dapper parameters. Identifiers (table, column, schema names) always go
+- **Values are always JDBC parameters. Identifiers (table, column, schema names) always go
   through `SqlIdentifier`**, which allows only `^[a-zA-Z_][a-zA-Z0-9_]{0,62}$`.
 - **Secrets are write-only.** Service-role keys are stored as hashes. OAuth client secrets and
-  project role passwords are encrypted with ASP.NET Data Protection, and the API reports only
+  project role passwords are encrypted with AES-256-GCM (`SecretProtector`), and the API reports only
   `googleConfigured: true`, never the secret itself.
 - **Keys can be rotated.** Every key carries a `key_version`. Rotating bumps the version, so all
   older keys, including open realtime connections, stop working.
@@ -599,24 +578,25 @@ the codebase was brought up.
 supavolt/
 ├── README.md                     you are here
 ├── DECISIONS.md                  design decisions and the fixes behind them
-├── INSTRUCTIONS.md               the original runbook for bringing the code up
+├── INSTRUCTIONS.md               runbook: build, run, smoke test
 ├── backend/
-│   ├── docker-compose.yml        postgres, minio, and the optional `api` container
+│   ├── pom.xml                   Maven parent: Spring Boot 4.1, Java 17, warnings as errors
+│   ├── mvnw, .mvn/               Maven wrapper (no Maven install needed)
+│   ├── docker-compose.yml        postgres, storage (RustFS), and the optional `api` container
 │   ├── db/init/01-roles.sql      creates the supavolt_tenant role
-│   ├── dotnet-tools.json         pins dotnet-ef
-│   ├── Directory.Build.props     net10.0, nullable, warnings as errors
-│   └── src/
-│       ├── Supavolt.Contracts/   request/response DTOs and enums (the API's public shape)
-│       ├── Supavolt.Api/
-│       │   ├── Program.cs        options, auth schemes, policies, middleware, endpoints
-│       │   ├── Common/           error mapping, Dapper row helper
-│       │   ├── Infrastructure/   entities, DbContext, options, mail, tenancy (SqlIdentifier,
-│       │   │                     connection factory, schema and role provisioning)
-│       │   ├── Features/         one file per feature: service + endpoints
-│       │   │   Auth · Orgs · Members · Projects · TableEditor · SqlEditor
-│       │   │   DataApi · Realtime · Storage · ProjectAuth
-│       │   └── Migrations/       EF Core migrations
-│       └── Supavolt.Tests/       unit tests + integration tests (Testcontainers)
+│   ├── scripts/new-secrets.sh    writes ~/.config/supavolt/secrets.yml
+│   ├── contracts/                Contracts.java: request/response records and enums (the API's public shape)
+│   └── api/src/
+│       ├── main/java/dev/supavolt/api/
+│       │   ├── config/           properties, security chains, CORS, JSON, errors, rate limits
+│       │   ├── common/           AppException, row mapping, tokens, slugs
+│       │   ├── infrastructure/   persistence (entities, repositories, encryption), mail,
+│       │   │                     tenancy (SqlIdentifier, connections, schema and role provisioning)
+│       │   └── features/         one package per feature: service + controller
+│       │       auth · orgs · members · projects · tableeditor · sqleditor
+│       │       dataapi · realtime · storage · projectauth
+│       ├── main/resources/       application.yml, application-dev.yml, db/migration (Flyway)
+│       └── test/java/            unit tests + integration tests (Testcontainers)
 └── frontend/
     ├── middleware.ts             session check and refresh on every page load
     ├── app/                      routes: login, register, organizations, projects,
@@ -625,17 +605,17 @@ supavolt/
     ├── components/               shared UI primitives
     └── lib/
         ├── api.ts                typed fetch wrapper
-        ├── types.ts              hand-kept mirror of Supavolt.Contracts
+        ├── types.ts              hand-kept mirror of Contracts.java
         ├── server-data.ts        all server-side reads, cookie forwarded
         ├── actions.ts            all server actions (writes)
-        └── realtime.ts           SignalR client
+        └── realtime.ts           realtime client (@microsoft/signalr)
 ```
 
 ---
 
 ## API reference
 
-All routes are under `http://localhost:5000/api`. Full interactive docs: `/scalar/v1` (development).
+All routes are under `http://localhost:5000/api`. Full interactive docs: `/api/docs` (development).
 
 | Area | Routes | Auth |
 | --- | --- | --- |
@@ -651,7 +631,7 @@ All routes are under `http://localhost:5000/api`. Full interactive docs: `/scala
 | **App storage** | `/projects/{project}/storage/buckets/{name}/…` | read: any project key, write: service role |
 | **App auth** | `POST /projects/{project}/auth/signup` · `/signin` · `/magic-link` · `/exchange` | public, rate-limited |
 | Health | `GET /health` | none |
-| Realtime hub | `ws://localhost:5000/realtime?access_token=<key>` | project key |
+| Realtime | `POST /realtime/negotiate`, then `ws://localhost:5000/realtime?access_token=<key>` (SignalR JSON protocol) | project key |
 
 ---
 
@@ -659,8 +639,8 @@ All routes are under `http://localhost:5000/api`. Full interactive docs: `/scala
 
 ```bash
 cd backend
-dotnet test                                                   # Option A
-docker compose exec -w /src api dotnet test src/Supavolt.Tests   # Option B
+./mvnw verify                                       # Option A: build, unit + integration tests, coverage
+docker compose exec api ./mvnw -B verify            # Option B
 ```
 
 ```mermaid
@@ -670,6 +650,7 @@ flowchart LR
         u2[FilterParser]
         u3[SqlStatementSplitter]
         u4[Project keys and versions]
+        u5[ASP.NET Identity hash compatibility]
     end
     subgraph Integration["Integration tests (real API + Postgres 17 in Docker)"]
         i1[Sign-in, refresh rotation, token reuse]
@@ -677,12 +658,15 @@ flowchart LR
         i3[Key scoping, rotation, anon write ban]
         i4[Storage prefix checks]
         i5[SQL editor isolation between projects]
+        i6[Realtime protocol, events, stale keys]
+        i7[Projects carrying secrets from the .NET API]
     end
 ```
 
 Integration tests start their own throwaway Postgres with
-[Testcontainers](https://dotnet.testcontainers.org/), so **Docker must be running**. They never
-touch your development database.
+[Testcontainers](https://java.testcontainers.org/), so **Docker must be running**. They never
+touch your development database or read your secrets file. The coverage report lands in
+`api/target/site/jacoco/index.html`.
 
 ---
 
@@ -690,11 +674,11 @@ touch your development database.
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `dotnet run` / `dotnet ef`: *"An Application Control policy has blocked this file"* | Windows Smart App Control blocks freshly compiled DLLs. Use [Option B](#option-b-run-the-api-in-docker). |
-| Dashboard keeps sending you back to `/login` | `JWT_ACCESS_SECRET` in `frontend/.env.local` doesn't match the API's `Jwt:AccessSecret`. Restart `pnpm dev` after changing it. |
-| API won't start: *"… is required"* / options validation error | A secret from Step 2 is missing. Run `dotnet user-secrets list` in `backend/src/Supavolt.Api`. |
-| Every API call returns 500 right after first start | Migrations haven't run. Do Step 3's `dotnet ef database update` (and restart the API in Option B). |
-| File upload fails / download 404s | The `supavolt-dev` bucket doesn't exist in MinIO. See Step 4. |
+| Dashboard keeps sending you back to `/login` | `JWT_ACCESS_SECRET` in `frontend/.env.local` doesn't match the API's `supavolt.jwt.access-secret`. Restart `pnpm dev` after changing it. |
+| API won't start: *"Binding to target … SupavoltProperties failed"* | A secret from Step 2 is missing; the message names it. Check `~/.config/supavolt/secrets.yml` (or `SUPAVOLT_SECRETS_FILE`). |
+| Option B: *"secrets.yml … is a directory"* | The secrets file didn't exist when the container started, so Docker created a directory in its place. Delete it, run `scripts/new-secrets.sh`, start again. |
+| API won't start: *"Migrations have failed validation"* | A migration file applied to this database was edited afterwards. Add a new `V2__…` migration instead of editing an applied one. |
+| File upload fails / download 404s | The `supavolt-dev` bucket doesn't exist. The dev profile creates it on start; otherwise create it in the storage console at http://localhost:9001. |
 | `supavolt_tenant` role missing | `01-roles.sql` only runs on a **fresh** Postgres volume. Run `docker compose down -v` (deletes data) and `up -d` again. |
 | Port 3001 or 5000 already in use | Another process holds it. On Windows: `Get-NetTCPConnection -LocalPort 5000` shows the owner. WSL's `wslrelay.exe` sometimes holds 5000; `wsl --shutdown` frees it. |
 | `pnpm install` stops with *ignored build scripts* | Already answered in `frontend/pnpm-workspace.yaml`. Make sure you have the latest version of that file. |
@@ -705,10 +689,10 @@ touch your development database.
 ## Not built yet
 
 - **Row-level security.** The anon key can read every row of every table in its project.
-  `ProjectAuthService.ValidateEndUserTokenAsync` is the hook to build it on.
+  `ProjectAuthService.validateEndUserToken` is the hook to build it on.
 - **Per-project Google/GitHub sign-in for app users.** Credentials can be saved, but the OAuth
   redirect and callback endpoints are not written.
-- **Multiple API instances.** Realtime needs a Redis backplane
-  (`Microsoft.AspNetCore.SignalR.StackExchangeRedis`) and a single elected listener.
-- **A .NET client SDK.** The HTTP API is stable enough to write one on `HttpClient` and
-  `HubConnectionBuilder`.
+- **Multiple API instances.** Realtime groups live in one process's memory. Several instances
+  need a shared fan-out (Redis pub/sub or a message broker) and a single elected listener.
+- **A Java client SDK.** The HTTP API is stable enough to write one on `java.net.http`; the
+  realtime side can use Microsoft's Java SignalR client against `/realtime`.

@@ -1,7 +1,0 @@
-<Solution>
-  <Folder Name="/src/">
-    <Project Path="src/Supavolt.Api/Supavolt.Api.csproj" />
-    <Project Path="src/Supavolt.Contracts/Supavolt.Contracts.csproj" />
-    <Project Path="src/Supavolt.Tests/Supavolt.Tests.csproj" />
-  </Folder>
-</Solution>

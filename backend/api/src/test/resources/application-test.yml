@@ -1,0 +1,25 @@
+# Integration tests: fixed throwaway secrets. The datasource comes from the Testcontainers
+# Postgres (see IntegrationTest).
+supavolt:
+  database:
+    tenant-password: supavolt_tenant
+  jwt:
+    access-secret: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    refresh-secret: rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
+  project-keys:
+    secret: pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp
+  invites:
+    secret: iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii
+  secrets:
+    encryption-key: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+  storage:
+    bucket: test
+    access-key-id: test
+    secret-access-key: test
+    service-url: http://127.0.0.1:9
+    public-base-url: http://127.0.0.1:9/test
+  # Every test client shares one address; the default of 10 a minute would trip mid-run.
+  rate-limits:
+    auth-permits-per-minute: 10000
+  cookies:
+    secure: false
