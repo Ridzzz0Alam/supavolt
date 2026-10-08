@@ -1,0 +1,27 @@
+# Local development against backend/docker-compose.yml. These are the throwaway passwords the
+# compose file creates, not secrets.
+spring:
+  datasource:
+    password: supavolt
+
+supavolt:
+  database:
+    tenant-password: supavolt_tenant
+  storage:
+    bucket: supavolt-dev
+    service-url: http://localhost:9000
+    public-base-url: http://localhost:9000/supavolt-dev
+    create-bucket: true
+  # Plain http on localhost: a Secure cookie would never come back.
+  cookies:
+    secure: false
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+logging:
+  level:
+    dev.supavolt: DEBUG

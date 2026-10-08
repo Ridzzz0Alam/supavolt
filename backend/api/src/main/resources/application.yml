@@ -1,0 +1,52 @@
+# Defaults for every environment. Secrets never go here: they come from the secrets file named by
+# SUPAVOLT_SECRETS_FILE (default ~/.config/supavolt/secrets.yml) or from environment variables
+# such as SUPAVOLT_JWT_ACCESSSECRET. See README "Run it locally".
+spring:
+  application:
+    name: supavolt-api
+  config:
+    import: optional:file:${SUPAVOLT_SECRETS_FILE:${user.home}/.config/supavolt/secrets.yml}
+  datasource:
+    # The admin role: JPA, Flyway, DDL and introspection.
+    url: jdbc:postgresql://localhost:5432/supavolt
+    username: supavolt_admin
+    hikari:
+      pool-name: admin
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    # A database the .NET API migrated is already at V1; Flyway records it rather than re-running.
+    baseline-on-migrate: true
+    baseline-version: 1
+  mvc:
+    problemdetails:
+      enabled: true
+
+server:
+  port: 5000
+  # Behind a proxy, OAuth redirect URIs must use the public scheme and host.
+  forward-headers-strategy: framework
+
+springdoc:
+  api-docs:
+    enabled: false
+    path: /api/openapi/v1.json
+  swagger-ui:
+    enabled: false
+    path: /api/docs
+
+supavolt:
+  database:
+    tenant-username: supavolt_tenant
+  api:
+    base-url: http://localhost:5000/api
+  web:
+    url: http://localhost:3001
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web: WARN
+    org.hibernate: WARN
