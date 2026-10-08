@@ -232,8 +232,9 @@ On first start, Postgres runs `db/init/01-roles.sql`, which creates the least-pr
 docker compose exec postgres psql -U supavolt_admin -d supavolt -c "\du"
 ```
 
-> Something else already on port 5432? Change the left-hand port in `docker-compose.yml` and
-> point the API at it: `export SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:<port>/supavolt`.
+> Something else already on port 5432? Put `POSTGRES_PORT=<port>` in `backend/.env` (gitignored;
+> Compose reads it) and point the API at it:
+> `export SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:<port>/supavolt`.
 
 ### Step 2: Generate the API secrets
 
