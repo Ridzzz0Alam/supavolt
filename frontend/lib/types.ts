@@ -41,6 +41,12 @@ export interface CurrentUser {
   avatarUrl: string | null;
 }
 
+/** Which dashboard sign-in providers the server has credentials for. */
+export interface AuthProviders {
+  google: boolean;
+  github: boolean;
+}
+
 // ─── Organizations and members ────────────────────────────────────────────────
 
 export interface Organization {

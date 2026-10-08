@@ -61,7 +61,7 @@ export async function login(_prev: ActionState, formData: FormData): Promise<Act
   }
 
   await applySetCookies(res);
-  redirect('/dashboard');
+  redirect(await landingPath(res, formData));
 }
 
 export async function register(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -81,7 +81,31 @@ export async function register(_prev: ActionState, formData: FormData): Promise<
   }
 
   await applySetCookies(res);
-  redirect('/dashboard');
+  redirect(await landingPath(res, formData));
+}
+
+/**
+ * An invite link opened while signed out arrives as /login?invite=<token>; the form carries the
+ * token through, and it is accepted here with the session just issued. Acceptance answers with a
+ * redirect to the org, which is where the user lands. A spent or expired invite still signs in.
+ */
+async function landingPath(signIn: Response, formData: FormData): Promise<string> {
+  const invite = String(formData.get('invite') ?? '');
+  const access = signIn.headers
+    .getSetCookie()
+    .map((header) => header.split(';')[0])
+    .find((pair) => pair.startsWith('access_token='));
+
+  if (!invite || !access) return '/dashboard';
+
+  const res = await fetch(`${API_URL}/auth/invite/accept?token=${encodeURIComponent(invite)}`, {
+    headers: { Cookie: access },
+    redirect: 'manual',
+  });
+
+  // Anything but a redirect into an org (an error, or back to /login) falls back to the dashboard.
+  const path = res.status === 302 ? new URL(res.headers.get('location') ?? '/', API_URL).pathname : '';
+  return path.startsWith('/organizations/') ? path : '/dashboard';
 }
 
 export async function signOut(): Promise<void> {

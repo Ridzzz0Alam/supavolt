@@ -51,6 +51,10 @@ public final class Contracts {
     public record CurrentUserResponse(UUID id, String email, String name, String avatarUrl) {
     }
 
+    /** Which dashboard sign-in providers the server has credentials for. */
+    public record AuthProvidersResponse(boolean google, boolean github) {
+    }
+
     // ─── Organizations and members ────────────────────────────────────────────────
 
     public record CreateOrgRequest(@NotBlank String name) {

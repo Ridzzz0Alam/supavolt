@@ -1,18 +1,29 @@
 'use client';
 
 import Link from 'next/link';
-import { useActionState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useActionState } from 'react';
 import { register } from '@/lib/actions';
 
+// useSearchParams needs a boundary, or the page cannot be prerendered.
 export default function RegisterPage() {
+  return (
+    <Suspense>
+      <RegisterForm />
+    </Suspense>
+  );
+}
+
+function RegisterForm() {
   const [state, formAction, isPending] = useActionState(register, {});
+  const invite = useSearchParams().get('invite');
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4 py-12">
       <div className="w-full max-w-md rounded-xl border border-border bg-card p-8 shadow-sm">
         <h1 className="text-xl font-medium">Create an account</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          You get a personal organization to start with
+          {invite ? 'Create an account to accept your invitation' : 'You get a personal organization to start with'}
         </p>
 
         {state.error && (
@@ -22,6 +33,7 @@ export default function RegisterPage() {
         )}
 
         <form action={formAction} className="mt-6 space-y-4">
+          {invite && <input type="hidden" name="invite" value={invite} />}
           {[
             { id: 'name', label: 'Name', type: 'text', autoComplete: 'name' },
             { id: 'email', label: 'Email', type: 'email', autoComplete: 'email' },
@@ -54,7 +66,7 @@ export default function RegisterPage() {
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Already have an account?{' '}
-          <Link href="/login" className="font-medium text-foreground hover:underline">
+          <Link href={invite ? `/login?invite=${encodeURIComponent(invite)}` : '/login'} className="font-medium text-foreground hover:underline">
             Sign in
           </Link>
         </p>

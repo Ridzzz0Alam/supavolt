@@ -76,6 +76,13 @@ class ApiTest extends IntegrationTest {
     }
 
     @Test
+    void providers_are_public_and_report_none_when_unconfigured() {
+        var res = newClient().get("auth/providers");
+        assertThat(res.status()).isEqualTo(200);
+        assertThat(res.body()).contains("\"google\":false").contains("\"github\":false");
+    }
+
+    @Test
     void oauth_without_a_configured_provider_returns_to_the_login_page() {
         var res = newClient().get("auth/google");
         assertThat(res.status()).isEqualTo(302);
