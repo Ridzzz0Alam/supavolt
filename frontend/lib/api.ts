@@ -1,8 +1,8 @@
 /**
- * Single entry point for every call to the .NET API.
+ * Single entry point for every call to the Spring Boot API.
  *
  * Two things differ from the original axios setup:
- *  - ASP.NET Core returns RFC 9457 ProblemDetails on failure, so errors have `title`/`detail`
+ *  - The API returns RFC 9457 ProblemDetails on failure, so errors have `title`/`detail`
  *    rather than `message`. This normalises that into one Error shape.
  *  - Server components forward the incoming cookie explicitly; the browser sends it itself.
  */

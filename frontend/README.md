@@ -1,6 +1,6 @@
 # Supavolt dashboard (Next.js 16 + TypeScript)
 
-Talks to the .NET API in `../backend`. Nothing is proxied: the API runs on its own origin and
+Talks to the Java (Spring Boot) API in `../backend`. Nothing is proxied: the API runs on its own origin and
 the browser sends the auth cookie cross-origin, which is why the API's CORS policy names this
 exact URL and sets `AllowCredentials`.
 

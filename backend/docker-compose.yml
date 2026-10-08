@@ -13,63 +13,48 @@ services:
       - ./db/init:/docker-entrypoint-initdb.d:ro
 
   # S3-compatible storage for local development. In production use S3 or Cloudflare R2.
-  minio:
-    image: quay.io/minio/minio
-    command: server /data --console-address ":9001"
+  # RustFS replaces MinIO, whose images are no longer published; it keeps MinIO's ports, access
+  # keys and console. The dev profile creates the bucket on first start.
+  storage:
+    image: rustfs/rustfs:1.0.1
     environment:
-      MINIO_ROOT_USER: supavolt
-      MINIO_ROOT_PASSWORD: supavolt123
+      RUSTFS_ACCESS_KEY: supavolt
+      RUSTFS_SECRET_KEY: supavolt123
     ports: ["9000:9000", "9001:9001"]
     volumes:
-      - miniodata:/data
+      - storagedata:/data
 
-  # The API in a Linux SDK container. Use it where the host cannot load freshly built assemblies
-  # (Windows Smart App Control blocks unsigned DLLs), or just to avoid installing the SDK:
+  # The API in a JDK container, for when you would rather not install Java 17 and Maven:
   #   docker compose --profile api up -d
-  # Secrets come from your normal `dotnet user-secrets` store, mounted read-only.
+  # Secrets come from the same file the API reads natively (see README), mounted read-only.
   api:
     profiles: ["api"]
-    image: mcr.microsoft.com/dotnet/sdk:10.0
-    working_dir: /src/src/Supavolt.Api
-    command: sh -c "dotnet run --no-launch-profile"
-    depends_on: [postgres, minio]
+    image: eclipse-temurin:17-jdk
+    working_dir: /src
+    command: sh -c "./mvnw -B -q -DskipTests install && java -jar api/target/supavolt-api-0.1.0-SNAPSHOT.jar"
+    depends_on: [postgres, storage]
     ports: ["5000:5000"]
     environment:
-      ASPNETCORE_ENVIRONMENT: Development
-      ASPNETCORE_URLS: http://+:5000
-      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-      PATH: /usr/share/dotnet:/root/.dotnet/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-      Database__ConnectionString: Host=postgres;Port=5432;Database=supavolt;Username=supavolt_admin;Password=supavolt
-      Database__DirectConnectionString: Host=postgres;Port=5432;Database=supavolt;Username=supavolt_admin;Password=supavolt;Pooling=false
-      Database__TenantConnectionString: Host=postgres;Port=5432;Database=supavolt;Username=supavolt_tenant;Password=supavolt_tenant
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/supavolt
+      SUPAVOLT_SECRETS_FILE: /run/secrets/supavolt.yml
       # Presigned URLs embed this host, so it must resolve from both the container and your browser.
-      Storage__ServiceUrl: http://host.docker.internal:9000
+      SUPAVOLT_STORAGE_SERVICEURL: http://host.docker.internal:9000
       # Integration tests start their own Postgres through the host's Docker daemon.
       TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
     extra_hosts: ["host.docker.internal:host-gateway"]
     volumes:
       - .:/src
-      - api_obj:/src/src/Supavolt.Api/obj
-      - api_bin:/src/src/Supavolt.Api/bin
-      - contracts_obj:/src/src/Supavolt.Contracts/obj
-      - contracts_bin:/src/src/Supavolt.Contracts/bin
-      - tests_obj:/src/src/Supavolt.Tests/obj
-      - tests_bin:/src/src/Supavolt.Tests/bin
-      - nuget:/root/.nuget/packages
-      - dpkeys:/root/.aspnet/DataProtection-Keys
-      # Windows finds the store under %APPDATA%. On macOS/Linux set, in backend/.env:
-      #   SUPAVOLT_SECRETS_DIR=${HOME}/.microsoft/usersecrets/supavolt-api
-      - ${SUPAVOLT_SECRETS_DIR:-${APPDATA}/Microsoft/UserSecrets/supavolt-api}:/root/.microsoft/usersecrets/supavolt-api:ro
+      # Build output stays in volumes, so the container never leaves root-owned files on the host.
+      - api_target:/src/api/target
+      - contracts_target:/src/contracts/target
+      - maven:/root/.m2
+      - ${SUPAVOLT_SECRETS_FILE:-~/.config/supavolt/secrets.yml}:/run/secrets/supavolt.yml:ro
       - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   pgdata:
-  miniodata:
-  api_obj:
-  api_bin:
-  contracts_obj:
-  contracts_bin:
-  tests_obj:
-  tests_bin:
-  nuget:
-  dpkeys:
+  storagedata:
+  api_target:
+  contracts_target:
+  maven:
